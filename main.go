@@ -102,9 +102,12 @@ func main() {
 				for _, post := range postHistory {
 					lowerTitle := strings.ToLower(post.Title)
 					lowerSubReddit := strings.ToLower(post.SubReddit)
+					lowerURL := strings.ToLower(post.URL)
 
 					//skip only fans
-					if matchPaidSites.MatchString(lowerTitle) || matchPaidSites.MatchString(lowerSubReddit) || isPaidSitePoster {
+					if matchPaidSites.MatchString(lowerTitle) ||
+						matchPaidSites.MatchString(lowerSubReddit) ||
+						matchPaidSites.MatchString(lowerURL) || isPaidSitePoster {
 						isPaidSitePoster = true
 						break
 					}
@@ -112,9 +115,12 @@ func main() {
 				for _, comment := range commentHistory {
 					lowerTitle := strings.ToLower(comment.Title)
 					lowerSubReddit := strings.ToLower(comment.SubReddit)
+					lowerURL := strings.ToLower(post.URL)
 
 					//skip only fans
-					if matchPaidSites.MatchString(lowerTitle) || matchPaidSites.MatchString(lowerSubReddit) || isPaidSitePoster {
+					if matchPaidSites.MatchString(lowerTitle) ||
+						matchPaidSites.MatchString(lowerSubReddit) ||
+						matchPaidSites.MatchString(lowerURL) || isPaidSitePoster {
 						isPaidSitePoster = true
 						break
 					}
