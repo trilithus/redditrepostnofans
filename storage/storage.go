@@ -13,6 +13,7 @@ type Storage[T any] interface {
 	Erase(key string) error
 	Import() error
 	Export() error
+	GetKeys() []string
 }
 
 type storage[T any] struct {
@@ -77,4 +78,12 @@ func (s *storage[T]) Export() error {
 	}
 
 	return os.WriteFile(s.filename, blob, 0777)
+}
+
+func (s *storage[T]) GetKeys() []string {
+	keys := make([]string, 0, len(s.data))
+	for key, _ := range s.data {
+		keys = append(keys, key)
+	}
+	return keys
 }

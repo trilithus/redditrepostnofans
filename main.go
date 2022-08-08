@@ -14,11 +14,12 @@ import (
 )
 
 const (
-	passwordFilename    = "password.json"
-	subredditName       = "bdsmgw"
-	repostSubredditName = "u_bdsmgw_repost_bot"
-	maxConcurrentJobs   = 2
-	ttlForPaidSiteUsers = time.Hour * 48
+	passwordFilename     = "password.json"
+	subredditName        = "bdsmgw"
+	repostSubredditName  = "u_bdsmgw_repost_bot"
+	maxConcurrentJobs    = 2
+	ttlForPaidSiteUsers  = time.Hour * 48
+	ttlForProcessedPosts = time.Hour * 48
 )
 
 var (
@@ -31,27 +32,44 @@ func main() {
 	postStorage := storage.NewStorage[any]("data_posts.json")
 	contentStorage := storage.NewStorage[any]("data_content.json")
 	onlyFansUsersStorage := storage.NewStorage[time.Time]("data_onlyfansusers.json")
+	processedStorage := storage.NewStorage[time.Time]("data_processed.json")
 
 	redditClient := redditclient.NewRedditClient(passwordFilename)
 	if err := redditClient.Login(ctx); err != nil {
 		log.Fatalf("could not log in reddit client, %s", err.Error())
 	}
 
-	iterator := redditclient.FetchNewPostsIterator{}
 	for {
-		posts, err := redditClient.FetchNewPosts(ctx, subredditName, &iterator)
-		if err != nil {
-			if !err.CanRetry() {
-				log.Fatalf(err.Error())
-			} else {
-				log.Printf("Client returned an error but we're allowed to retry: %s", err.Error())
-				continue
+		iterator := redditclient.FetchNewPostsIterator{}
+		posts := make([]redditclient.RedditPost, 0, 1000)
+		for {
+			fetchedPosts, err := redditClient.FetchNewPosts(ctx, subredditName, &iterator)
+			if err != nil {
+				if !err.CanRetry() {
+					log.Fatalf(err.Error())
+				} else {
+					log.Printf("Client returned an error but we're allowed to retry: %s", err.Error())
+					break
+				}
 			}
+			if len(fetchedPosts) == 0 {
+				break
+			}
+			posts = append(posts, fetchedPosts...)
 		}
+
+		processedPostCount := 0
+		repostCount := 0
 
 		jobQueue := make(chan int, maxConcurrentJobs)
 		wg := sync.WaitGroup{}
 		for _, post := range posts {
+			if _, hasProcessed := processedStorage.Retrieve(post.FullID); hasProcessed {
+				continue
+			}
+			processedStorage.Store(post.FullID, time.Now())
+
+			processedPostCount++
 			if timeStamp, hasUser := onlyFansUsersStorage.Retrieve(post.AuthorID); hasUser {
 				if time.Now().Before(timeStamp.Add(ttlForPaidSiteUsers)) {
 					continue
@@ -69,7 +87,6 @@ func main() {
 			go func(post redditclient.RedditPost) {
 				defer func() { <-jobQueue }()
 				defer wg.Done()
-
 				var postHistory []redditclient.RedditPost
 				backoff.Retry(func() error {
 					var err redditclient.ClientError
@@ -131,6 +148,7 @@ func main() {
 					onlyFansUsersStorage.Store(post.AuthorID, now)
 					return
 				} else {
+					repostCount++
 					log.Printf("[%s]\t%s\n", post.FullID, post.Title)
 					crossPost, err := redditClient.CrossPost(ctx, post, repostSubredditName)
 					if err != nil {
@@ -151,10 +169,27 @@ func main() {
 		}
 		wg.Wait()
 
-		if len(posts) == 0 {
+		processedPostIDs := processedStorage.GetKeys()
+		now := time.Now()
+		for _, postID := range processedPostIDs {
+			creationTime, _ := processedStorage.Retrieve(postID)
+			if now.After(creationTime.Add(ttlForProcessedPosts)) {
+				processedStorage.Erase(postID)
+			}
+		}
+
+		if processedPostCount == 0 {
+			log.Println("-- no new posts --")
 			time.Sleep(time.Second * 90)
+			continue
+		}
+
+		if processedPostCount > 0 && repostCount == 0 {
+			log.Printf("-- processed %d posts, no new reposts -- \n\n", processedPostCount)
+			time.Sleep(time.Second * 300)
 		} else {
-			log.Print("\n\n -- end of batch -- \n\n")
+			log.Printf("-- processed %d posts, %d (s) reposts -- \n\n", processedPostCount, repostCount)
+			time.Sleep(time.Second * 30)
 		}
 	}
 
